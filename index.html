@@ -6,7 +6,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>🐝 Spelling Bee</title>
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&family=Poppins:wght@600;700&display=swap" rel="stylesheet">
-<script src="https://code.responsivevoice.org/responsivevoice.js?key=FREE"></script>
 <style>
 :root{
   --bg:#FFF8EE; --card:#fff;
@@ -353,21 +352,38 @@ const ABC = {
 };
 
 /* =====================================================
-   SPEECH  — single clean function, no double-fire
+   SPEECH — native Web Speech API
+   Safe now because addTap() prevents double-fire
 ===================================================== */
+// Load voices (needed for some browsers)
+var _voices = [];
+function _loadVoices() {
+  _voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+}
+if (window.speechSynthesis) {
+  window.speechSynthesis.onvoiceschanged = _loadVoices;
+  _loadVoices();
+}
+
 function say(text, rate, pitch) {
+  if (!window.speechSynthesis) return;
   rate  = rate  || 0.85;
   pitch = pitch || 1.1;
   try {
-    if (window.responsiveVoice && responsiveVoice.voiceSupport()) {
-      responsiveVoice.cancel();
-      responsiveVoice.speak(text, 'UK English Female', {rate: rate, pitch: pitch, volume: 1});
-    } else if (window.speechSynthesis) {
-      speechSynthesis.cancel();
-      var u = new SpeechSynthesisUtterance(text);
-      u.rate = rate; u.pitch = pitch; u.volume = 1;
-      speechSynthesis.speak(u);
+    // Reload voices if empty — iOS only populates them after first user gesture
+    if (!_voices.length) _loadVoices();
+    window.speechSynthesis.cancel();
+    var u = new SpeechSynthesisUtterance(text);
+    u.rate   = rate;
+    u.pitch  = pitch;
+    u.volume = 1;
+    u.lang   = 'en-US';
+    if (_voices.length) {
+      var eng = _voices.find(function(v){ return /en-US/i.test(v.lang); }) ||
+                _voices.find(function(v){ return /en/i.test(v.lang); });
+      if (eng) u.voice = eng;
     }
+    window.speechSynthesis.speak(u);
   } catch(e) { /* silent fail */ }
 }
 
@@ -559,10 +575,25 @@ function renderScramble() {
     var b = document.createElement('div');
     b.className = 'sb' + (G.scramUsed[i] ? ' used' : '');
     b.textContent = l.toUpperCase();
-    if (!G.scramUsed[i]) {
-      addTap(b, function() { pickScram(i, l); });
-    }
+    b.dataset.idx = i;
+    b.dataset.letter = l;
     row.appendChild(b);
+  });
+  // Single listener on the parent — no stacking, no closure bugs
+  var touched = false;
+  row.addEventListener('touchstart', function(e) {
+    e.preventDefault();
+    var t = e.target.closest('.sb');
+    if (!t || t.classList.contains('used')) return;
+    touched = true;
+    pickScram(parseInt(t.dataset.idx), t.dataset.letter);
+    setTimeout(function(){ touched = false; }, 400);
+  }, {passive: false});
+  row.addEventListener('click', function(e) {
+    if (touched) return;
+    var t = e.target.closest('.sb');
+    if (!t || t.classList.contains('used')) return;
+    pickScram(parseInt(t.dataset.idx), t.dataset.letter);
   });
   area.appendChild(row);
 }
@@ -757,8 +788,8 @@ function doCheck() {
 
   var answer = G.typed.map(function(c){ return c || ''; }).join('');
 
-  // Check all slots are filled
-  if (answer.indexOf('') !== -1 || answer.length < w.word.length) {
+  // Check all slots are filled (null = empty slot)
+  if (G.typed.indexOf(null) !== -1) {
     say('Keep going, you can do it!', 0.9, 1.2);
     // Shake empty boxes
     for (var i = 0; i < w.word.length; i++) {
